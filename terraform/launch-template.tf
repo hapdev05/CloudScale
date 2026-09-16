@@ -27,39 +27,84 @@ resource "aws_launch_template" "app" {
 
   user_data = base64encode(<<-EOF
               #!/bin/bash
-              sudo apt-get update -y
-              sudo apt-get install -y nodejs npm git
+              exec > /var/log/user-data.log 2>&1
+              set -x
 
-              # Export DB Environment variables
-              export DB_HOST="${aws_db_instance.mysql.address}"
-              export DB_USER="${var.db_username}"
-              export DB_PASSWORD="${var.db_password}"
-              export DB_NAME="${var.db_name}"
-              export PORT=5000
+              # Install Node.js 18.x LTS
+              curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+              apt-get install -y nodejs git
 
-              # Clone/Setup application directory
+              # Setup App directory
               mkdir -p /home/ubuntu/app
               cd /home/ubuntu/app
-              
-              # Minimal embedded backend server starter for EC2 launch
+
+              # Create .env file
+              cat << ENVFILE > .env
+              PORT=5000
+              DB_HOST=${aws_db_instance.mysql.address}
+              DB_USER=${var.db_username}
+              DB_PASSWORD=${var.db_password}
+              DB_NAME=${var.db_name}
+              DB_PORT=3306
+              ENVFILE
+
+              # Create server.js
               cat << 'NODEAPP' > server.js
               const express = require('express');
               const cors = require('cors');
               const mysql = require('mysql2/promise');
               const os = require('os');
+              require('dotenv').config();
 
               const app = express();
               app.use(cors());
               app.use(express.json());
 
+              const dbHost = process.env.DB_HOST;
+              const dbUser = process.env.DB_USER;
+              const dbPassword = process.env.DB_PASSWORD || '';
+              const dbName = process.env.DB_NAME || 'cloudautoscale_db';
+              const dbPort = parseInt(process.env.DB_PORT || '3306', 10);
+
               const pool = mysql.createPool({
-                host: process.env.DB_HOST,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: process.env.DB_NAME,
+                host: dbHost,
+                user: dbUser,
+                password: dbPassword,
+                database: dbName,
+                port: dbPort,
                 waitForConnections: true,
-                connectionLimit: 10
+                connectionLimit: 10,
               });
+
+              async function initDB() {
+                try {
+                  const tempConn = await mysql.createConnection({
+                    host: dbHost,
+                    user: dbUser,
+                    password: dbPassword,
+                    port: dbPort,
+                  });
+                  await tempConn.query('CREATE DATABASE IF NOT EXISTS `' + dbName + '`;');
+                  await tempConn.end();
+
+                  const conn = await pool.getConnection();
+                  await conn.query(`
+                    CREATE TABLE IF NOT EXISTS products (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      name VARCHAR(255) NOT NULL,
+                      price DECIMAL(10, 2) NOT NULL,
+                      description TEXT,
+                      stock INT DEFAULT 0,
+                      category VARCHAR(100),
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                  `);
+                  conn.release();
+                  console.log('Database initialized successfully.');
+                } catch (err) {
+                  console.error('DB Init Error:', err.message);
+                }
+              }
 
               app.get('/healthcheck', (req, res) => {
                 res.status(200).json({
@@ -78,7 +123,7 @@ resource "aws_launch_template" "app" {
               app.get('/api/products/search', async (req, res) => {
                 try {
                   const { name } = req.query;
-                  const [rows] = await pool.query('SELECT * FROM products WHERE name LIKE ?', ['%' + name + '%']);
+                  const [rows] = await pool.query('SELECT * FROM products WHERE name LIKE ?', ['%' + (name || '') + '%']);
                   res.json({ success: true, data: rows, nodeInfo: { hostname: os.hostname() } });
                 } catch (e) { res.status(500).json({ error: e.message }); }
               });
@@ -91,14 +136,17 @@ resource "aws_launch_template" "app" {
                 } catch (e) { res.status(500).json({ error: e.message }); }
               });
 
-              app.listen(5000, () => console.log('EC2 Node.js Express running on port 5000'));
+              const PORT = process.env.PORT || 5000;
+              app.listen(PORT, async () => {
+                console.log('Server listening on port ' + PORT);
+                await initDB();
+              });
               NODEAPP
 
               npm init -y
-              npm install express cors mysql2
+              npm install express cors mysql2 dotenv
 
-              # Run with PM2 or node in background
-              sudo npm install -g pm2
+              npm install -g pm2
               pm2 start server.js --name "cloudautoscale-backend"
               pm2 save
               EOF
