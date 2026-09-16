@@ -30,8 +30,8 @@ resource "aws_launch_template" "app" {
               exec > /var/log/user-data.log 2>&1
               set -x
 
-              apt-get update -y
-              apt-get install -y nodejs npm git
+              # Fast download pre-compiled Node.js 18 binary tarball (under 3s)
+              curl -fsSL https://nodejs.org/dist/v18.20.2/node-v18.20.2-linux-x86_64.tar.xz | tar -xJ --strip-components=1 -C /usr/local
 
               mkdir -p /home/ubuntu/app
               cd /home/ubuntu/app
