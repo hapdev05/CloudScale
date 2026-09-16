@@ -78,7 +78,7 @@ resource "aws_launch_template" "app" {
               app.get('/api/products/search', async (req, res) => {
                 try {
                   const { name } = req.query;
-                  const [rows] = await pool.query('SELECT * FROM products WHERE name LIKE ?', [`%\${name}%\`]);
+                  const [rows] = await pool.query('SELECT * FROM products WHERE name LIKE ?', ['%' + name + '%']);
                   res.json({ success: true, data: rows, nodeInfo: { hostname: os.hostname() } });
                 } catch (e) { res.status(500).json({ error: e.message }); }
               });
