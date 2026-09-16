@@ -30,15 +30,12 @@ resource "aws_launch_template" "app" {
               exec > /var/log/user-data.log 2>&1
               set -x
 
-              # Install Node.js 18.x LTS
-              curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-              apt-get install -y nodejs git
+              apt-get update -y
+              apt-get install -y nodejs npm git
 
-              # Setup App directory
               mkdir -p /home/ubuntu/app
               cd /home/ubuntu/app
 
-              # Create .env file
               cat << ENVFILE > .env
               PORT=5000
               DB_HOST=${aws_db_instance.mysql.address}
@@ -48,20 +45,33 @@ resource "aws_launch_template" "app" {
               DB_PORT=3306
               ENVFILE
 
-              # Create server.js
               cat << 'NODEAPP' > server.js
               const express = require('express');
               const cors = require('cors');
               const mysql = require('mysql2/promise');
               const os = require('os');
-              require('dotenv').config();
+              const fs = require('fs');
+              const path = require('path');
+
+              const envPath = path.join(__dirname, '.env');
+              if (fs.existsSync(envPath)) {
+                const envConfig = fs.readFileSync(envPath, 'utf8');
+                envConfig.split('\n').forEach(line => {
+                  const parts = line.split('=');
+                  const key = parts[0] ? parts[0].trim() : '';
+                  const value = parts.slice(1).join('=').trim();
+                  if (key && value) {
+                    process.env[key] = value;
+                  }
+                });
+              }
 
               const app = express();
               app.use(cors());
               app.use(express.json());
 
-              const dbHost = process.env.DB_HOST;
-              const dbUser = process.env.DB_USER;
+              const dbHost = process.env.DB_HOST || 'localhost';
+              const dbUser = process.env.DB_USER || 'admin';
               const dbPassword = process.env.DB_PASSWORD || '';
               const dbName = process.env.DB_NAME || 'cloudautoscale_db';
               const dbPort = parseInt(process.env.DB_PORT || '3306', 10);
@@ -144,11 +154,9 @@ resource "aws_launch_template" "app" {
               NODEAPP
 
               npm init -y
-              npm install express cors mysql2 dotenv
+              npm install express cors mysql2
 
-              npm install -g pm2
-              pm2 start server.js --name "cloudautoscale-backend"
-              pm2 save
+              nohup node server.js > app.log 2>&1 &
               EOF
   )
 
