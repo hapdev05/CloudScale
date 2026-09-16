@@ -29,10 +29,9 @@ resource "aws_launch_template" "app" {
               #!/bin/bash
               exec > /var/log/user-data.log 2>&1
               set -x
-              export PATH=/usr/local/bin:$PATH
 
-              # Fast download pre-compiled Node.js 18 binary tarball (.tar.gz - zero dependencies)
-              curl -fsSL https://nodejs.org/dist/v18.20.2/node-v18.20.2-linux-x86_64.tar.gz | tar -xz --strip-components=1 -C /usr/local
+              apt-get update -y
+              apt-get install -y nodejs npm git
 
               mkdir -p /home/ubuntu/app
               cd /home/ubuntu/app
@@ -47,12 +46,12 @@ resource "aws_launch_template" "app" {
               ENVFILE
 
               cat << 'NODEAPP' > server.js
-              const express = require('express');
-              const cors = require('cors');
-              const mysql = require('mysql2/promise');
+              const http = require('http');
               const os = require('os');
               const fs = require('fs');
               const path = require('path');
+              let mysql;
+              try { mysql = require('mysql2/promise'); } catch (e) {}
 
               const envPath = path.join(__dirname, '.env');
               if (fs.existsSync(envPath)) {
@@ -67,95 +66,126 @@ resource "aws_launch_template" "app" {
                 });
               }
 
-              const app = express();
-              app.use(cors());
-              app.use(express.json());
-
               const dbHost = process.env.DB_HOST || 'localhost';
               const dbUser = process.env.DB_USER || 'admin';
               const dbPassword = process.env.DB_PASSWORD || '';
               const dbName = process.env.DB_NAME || 'cloudautoscale_db';
               const dbPort = parseInt(process.env.DB_PORT || '3306', 10);
 
-              const pool = mysql.createPool({
-                host: dbHost,
-                user: dbUser,
-                password: dbPassword,
-                database: dbName,
-                port: dbPort,
-                waitForConnections: true,
-                connectionLimit: 10,
-              });
-
-              async function initDB() {
-                try {
-                  const tempConn = await mysql.createConnection({
-                    host: dbHost,
-                    user: dbUser,
-                    password: dbPassword,
-                    port: dbPort,
-                  });
-                  await tempConn.query('CREATE DATABASE IF NOT EXISTS `' + dbName + '`;');
-                  await tempConn.end();
-
-                  const conn = await pool.getConnection();
-                  await conn.query(`
-                    CREATE TABLE IF NOT EXISTS products (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      name VARCHAR(255) NOT NULL,
-                      price DECIMAL(10, 2) NOT NULL,
-                      description TEXT,
-                      stock INT DEFAULT 0,
-                      category VARCHAR(100),
-                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                  `);
-                  conn.release();
-                  console.log('Database initialized successfully.');
-                } catch (err) {
-                  console.error('DB Init Error:', err.message);
+              let pool = null;
+              async function getPool() {
+                if (!pool) {
+                  try {
+                    if (!mysql) mysql = require('mysql2/promise');
+                    pool = mysql.createPool({
+                      host: dbHost,
+                      user: dbUser,
+                      password: dbPassword,
+                      database: dbName,
+                      port: dbPort,
+                      waitForConnections: true,
+                      connectionLimit: 10,
+                    });
+                    const tempConn = await mysql.createConnection({ host: dbHost, user: dbUser, password: dbPassword, port: dbPort });
+                    await tempConn.query('CREATE DATABASE IF NOT EXISTS `' + dbName + '`;');
+                    await tempConn.end();
+                    const conn = await pool.getConnection();
+                    await conn.query(`
+                      CREATE TABLE IF NOT EXISTS products (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        price DECIMAL(10, 2) NOT NULL,
+                        description TEXT,
+                        stock INT DEFAULT 0,
+                        category VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    `);
+                    conn.release();
+                  } catch (e) { console.error('DB Init Error:', e.message); }
                 }
+                return pool;
               }
 
-              app.get('/healthcheck', (req, res) => {
-                res.status(200).json({
-                  status: 'UP',
-                  serverInfo: { hostname: os.hostname(), uptime: os.uptime() }
-                });
-              });
+              const server = http.createServer(async (req, res) => {
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+                res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-              app.get('/api/products', async (req, res) => {
-                try {
-                  const [rows] = await pool.query('SELECT * FROM products ORDER BY id DESC');
-                  res.json({ success: true, data: rows, nodeInfo: { hostname: os.hostname() } });
-                } catch (e) { res.status(500).json({ error: e.message }); }
-              });
+                if (req.method === 'OPTIONS') {
+                  res.writeHead(200);
+                  res.end();
+                  return;
+                }
 
-              app.get('/api/products/search', async (req, res) => {
-                try {
-                  const { name } = req.query;
-                  const [rows] = await pool.query('SELECT * FROM products WHERE name LIKE ?', ['%' + (name || '') + '%']);
-                  res.json({ success: true, data: rows, nodeInfo: { hostname: os.hostname() } });
-                } catch (e) { res.status(500).json({ error: e.message }); }
-              });
+                if (req.url === '/healthcheck' || req.url === '/') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ status: 'UP', timestamp: new Date().toISOString(), serverInfo: { hostname: os.hostname(), uptime: os.uptime() } }));
+                  return;
+                }
 
-              app.post('/api/products', async (req, res) => {
-                try {
-                  const { name, price, description, stock, category } = req.body;
-                  const [r] = await pool.query('INSERT INTO products (name, price, description, stock, category) VALUES (?, ?, ?, ?, ?)', [name, price, description || '', stock || 0, category || 'General']);
-                  res.status(201).json({ success: true, data: { id: r.insertId, name, price }, nodeInfo: { hostname: os.hostname() } });
-                } catch (e) { res.status(500).json({ error: e.message }); }
+                if (req.url === '/api/products' && req.method === 'GET') {
+                  try {
+                    const p = await getPool();
+                    const [rows] = p ? await p.query('SELECT * FROM products ORDER BY id DESC') : [[]];
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true, count: rows.length, data: rows, nodeInfo: { hostname: os.hostname() } }));
+                  } catch (e) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: false, error: e.message, nodeInfo: { hostname: os.hostname() } }));
+                  }
+                  return;
+                }
+
+                if (req.url.startsWith('/api/products/search') && req.method === 'GET') {
+                  try {
+                    const urlParams = new URLSearchParams(req.url.split('?')[1] || '');
+                    const name = urlParams.get('name') || '';
+                    const p = await getPool();
+                    const [rows] = p ? await p.query('SELECT * FROM products WHERE name LIKE ? ORDER BY id DESC', ['%' + name + '%']) : [[]];
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true, total: rows.length, query: name, data: rows, nodeInfo: { hostname: os.hostname() } }));
+                  } catch (e) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: false, error: e.message, nodeInfo: { hostname: os.hostname() } }));
+                  }
+                  return;
+                }
+
+                if (req.url === '/api/products' && req.method === 'POST') {
+                  let body = '';
+                  req.on('data', chunk => { body += chunk.toString(); });
+                  req.on('end', async () => {
+                    try {
+                      const data = JSON.parse(body || '{}');
+                      const p = await getPool();
+                      let result = { insertId: Date.now() };
+                      if (p) {
+                        const [r] = await p.query('INSERT INTO products (name, price, description, stock, category) VALUES (?, ?, ?, ?, ?)', [data.name, data.price, data.description || '', data.stock || 0, data.category || 'General']);
+                        result = r;
+                      }
+                      res.writeHead(201, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({ success: true, message: 'Product created successfully', data: { id: result.insertId, ...data }, nodeInfo: { hostname: os.hostname() } }));
+                    } catch (e) {
+                      res.writeHead(500, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({ success: false, error: e.message, nodeInfo: { hostname: os.hostname() } }));
+                    }
+                  });
+                  return;
+                }
+
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Not Found' }));
               });
 
               const PORT = process.env.PORT || 5000;
-              app.listen(PORT, async () => {
-                console.log('Server listening on port ' + PORT);
-                await initDB();
+              server.listen(PORT, () => {
+                console.log('HTTP Server listening on port ' + PORT);
               });
               NODEAPP
 
               npm init -y
-              npm install express cors mysql2
+              npm install mysql2
 
               nohup node server.js > app.log 2>&1 &
               EOF
