@@ -72,6 +72,7 @@ cloud-auto-scaling-project/
 │   └── test.js               # Kịch bản Load Test sử dụng k6
 │
 ├── docs/                     # 📚 Tài liệu chi tiết dự án
+│   ├── DEVELOPMENT_WORKFLOW.md# Hướng dẫn chi tiết vận hành & phát triển
 │   ├── ARCHITECTURE.md       # Chi tiết kiến trúc & luồng xử lý
 │   ├── FEATURES.md           # Chi tiết các tính năng Web, Cloud & Testing
 │   ├── API_DOCUMENTATION.md  # Tài liệu RESTful API
