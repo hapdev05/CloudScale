@@ -271,7 +271,27 @@ Chi tiết kịch bản thực nghiệm đính kèm tại [docs/LOAD_TESTING_GUI
 
 ---
 
-## 📄 8. Giấy Phép & Tác Giả (License & Authors)
+## 💵 8. Quản Lý Chi Phí & Tạm Dừng Hạ Tầng (AWS Cost Management)
+
+Để đảm bảo không bị trừ tiền trên tài khoản AWS cá nhân/học tập khi không sử dụng:
+
+- **🛑 Tạm Dừng Hệ Thống (Ngắt Phí 0đ)**:
+  ```bash
+  cd terraform
+  terraform destroy -auto-approve
+  ```
+  *Lệnh này đóng vai trò là "nút Pause" giúp dọn dẹp sạch toàn bộ ALB, EC2, RDS để tài khoản không bị phát sinh chi phí. Mã nguồn hạ tầng vẫn được lưu trữ tuyệt đối an toàn trong các tệp `.tf`.*
+
+- **🔄 Khôi Phục Hệ Thống Khi Cần Demo / Bảo Vệ Đồ Án**:
+  ```bash
+  cd terraform
+  terraform apply -auto-approve
+  ```
+  *Terraform sẽ tự động khôi phục lại 100% hạ tầng chuẩn xác trên AWS chỉ trong 3 - 5 phút.*
+
+---
+
+## 📄 9. Giấy Phép & Tác Giả (License & Authors)
 
 - **Đề tài**: Developing and Testing a Cloud-Based Web Application with Auto Scaling and Load Balancing.
 - **Tên dự án ngắn gọn**: **CloudAutoScale**.
