@@ -23,7 +23,7 @@ export default function () {
     'Search API status is 200': (r) => r.status === 200,
   });
 
-  sleep(1);
+  sleep(0.1);
 
   // 2. Test POST Add Product API
   const payload = JSON.stringify({
@@ -45,5 +45,5 @@ export default function () {
     'Add Product API status is 201': (r) => r.status === 201,
   });
 
-  sleep(1);
+  sleep(0.1);
 }

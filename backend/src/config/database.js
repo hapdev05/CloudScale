@@ -3,12 +3,18 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+const dbHost = process.env.DB_HOST || 'localhost';
+const dbUser = process.env.DB_USER || 'root';
+const dbPassword = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : '';
+const dbName = process.env.DB_NAME || 'cloudautoscale_db';
+const dbPort = parseInt(process.env.DB_PORT || '3306', 10);
+
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'password',
-  database: process.env.DB_NAME || 'cloudautoscale_db',
-  port: parseInt(process.env.DB_PORT || '3306', 10),
+  host: dbHost,
+  user: dbUser,
+  password: dbPassword,
+  database: dbName,
+  port: dbPort,
   waitForConnections: true,
   connectionLimit: 20,
   queueLimit: 0,
@@ -16,6 +22,18 @@ const pool = mysql.createPool({
 
 async function initDatabase() {
   try {
+    // 1. Kết nối không cần DB_NAME để tự động tạo database nếu chưa có
+    const tempConnection = await mysql.createConnection({
+      host: dbHost,
+      user: dbUser,
+      password: dbPassword,
+      port: dbPort,
+    });
+
+    await tempConnection.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\`;`);
+    await tempConnection.end();
+
+    // 2. Kết nối lại qua connection pool
     const connection = await pool.getConnection();
     console.log('✅ Connected to MySQL Database successfully.');
 

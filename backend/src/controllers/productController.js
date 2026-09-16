@@ -142,3 +142,21 @@ exports.deleteProduct = async (req, res) => {
     res.status(500).json({ success: false, error: error.message, nodeInfo: getNodeInfo() });
   }
 };
+
+// DELETE /api/products/cleanup-test - Delete all load test products
+exports.cleanupTestProducts = async (req, res) => {
+  try {
+    const [result] = await pool.query(
+      "DELETE FROM products WHERE category = 'LoadTest' OR name LIKE 'LoadTest%'"
+    );
+    res.json({
+      success: true,
+      message: `Successfully deleted ${result.affectedRows} test products`,
+      affectedRows: result.affectedRows,
+      nodeInfo: getNodeInfo(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message, nodeInfo: getNodeInfo() });
+  }
+};
+
