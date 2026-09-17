@@ -19,6 +19,7 @@ resource "aws_launch_template" "app" {
   name_prefix   = "${var.project_name}-lt-"
   image_id      = data.aws_ami.ubuntu.id
   instance_type = var.instance_type
+  key_name      = "cloudautoscale-key"
 
   network_interfaces {
     associate_public_ip_address = true
@@ -34,7 +35,11 @@ exec > /var/log/user-data.log 2>&1
 set -x
 
 apt-get update -y
-apt-get install -y nodejs npm git
+apt-get install -y git curl
+
+# Cài Node.js 18 LTS từ NodeSource (thay vì apt mặc định v12)
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt-get install -y nodejs
 
 # Clone repository mã nguồn từ GitHub
 mkdir -p /home/ubuntu/app
