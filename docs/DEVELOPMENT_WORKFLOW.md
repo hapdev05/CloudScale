@@ -110,7 +110,71 @@ k6 run -e TARGET_URL=http://<ĐỊA_CHỈ_ALB_DNS_CỦA_BẠN> test.js
 
 ---
 
-## 📂 5. Bảng Tóm Tắt Các Câu Lệnh Thường Dùng
+## 🔑 5. Truy Cập SSH Vào EC2 & Quản Lý Database RDS MySQL
+
+Khi cần debug, kiểm tra log hoặc quản lý dữ liệu trực tiếp trên AWS:
+
+### Bước 1: Lấy IP của EC2 đang chạy
+```bash
+aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=cloudautoscale-backend-node" "Name=instance-state-name,Values=running" \
+  --query "Reservations[*].Instances[*].[InstanceId,PublicIpAddress]" \
+  --output table --region ap-southeast-1
+```
+
+### Bước 2: SSH vào EC2
+```bash
+ssh -i ~/.ssh/cloudautoscale-key.pem ubuntu@<IP_CỦA_EC2>
+```
+
+### Bước 3: Kiểm tra log trên EC2
+```bash
+# Xem log quá trình khởi tạo EC2 (user-data script)
+cat /var/log/user-data.log
+
+# Xem log Backend App
+cat /home/ubuntu/app/backend/app.log
+
+# Kiểm tra Backend có đang chạy không
+ps aux | grep node
+```
+
+### Bước 4: Truy cập RDS MySQL từ EC2
+```bash
+# Cài MySQL client (lần đầu)
+sudo apt-get install -y mysql-client
+
+# Kết nối vào RDS MySQL
+mysql -h cloudautoscale-db.cjwywm08ujzz.ap-southeast-1.rds.amazonaws.com \
+      -u admin \
+      -p'CloudAutoScaling2026Secured!' \
+      cloudautoscale_db
+```
+
+### Các lệnh MySQL hữu ích:
+```sql
+-- Xem danh sách tables
+SHOW TABLES;
+
+-- Xem dữ liệu sản phẩm
+SELECT * FROM products;
+
+-- Xem dung lượng Database
+SELECT table_name,
+       ROUND(data_length/1024/1024, 2) AS 'Data (MB)',
+       ROUND(index_length/1024/1024, 2) AS 'Index (MB)'
+FROM information_schema.tables
+WHERE table_schema = 'cloudautoscale_db';
+
+-- Xóa toàn bộ dữ liệu (reset DB)
+TRUNCATE TABLE products;
+```
+
+> **⚠️ Lưu ý**: RDS nằm trong **Private Subnet** → chỉ truy cập được từ EC2 (cùng VPC), **không** truy cập trực tiếp từ máy local.
+
+---
+
+## 📂 6. Bảng Tóm Tắt Các Câu Lệnh Thường Dùng
 
 | Thao Tác | Câu Lệnh | Thư Mục Chạy |
 |---|---|---|
@@ -120,4 +184,7 @@ k6 run -e TARGET_URL=http://<ĐỊA_CHỈ_ALB_DNS_CỦA_BẠN> test.js
 | **Tạo Hạ Tầng AWS** | `terraform apply -auto-approve` | `terraform/` |
 | **Hủy Hạ Tầng Ngắt Phí**| `terraform destroy -auto-approve` | `terraform/` |
 | **Reset EC2 Kéo Code Mới**| `aws ec2 terminate-instances --instance-ids $(aws ec2 describe-instances --query "Reservations[*].Instances[?State.Name=='running'].InstanceId" --output text)` | Bất kỳ |
+| **SSH vào EC2** | `ssh -i ~/.ssh/cloudautoscale-key.pem ubuntu@<IP>` | Bất kỳ |
+| **Kết nối RDS MySQL** | `mysql -h <RDS_ENDPOINT> -u admin -p cloudautoscale_db` | Trong SSH EC2 |
 | **Chạy Load Test** | `k6 run -e TARGET_URL=http://<ALB-DNS> test.js` | `load-test/` |
+
